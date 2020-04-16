@@ -1,0 +1,16 @@
+{
+  "name": "ByteMe",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^0.19.2",
+    "cheerio": "^1.0.0-rc.3",
+    "discord.js": "^12.1.1",
+    "dotenv": "^8.2.0",
+    "fp-ts": "^2.5.3"
+  },
+  "devDependencies": {
+    "@types/cheerio": "^0.22.17"
+  }
+}
