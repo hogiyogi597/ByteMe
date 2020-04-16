@@ -24,12 +24,7 @@ const client = new Discord.Client()
 client.on('ready', () => {
     console.log('Bot connected to server');
 });
-
-client.on('message', async message => {
-    const commandTokens = message.content.split(" ")
-    const firstCommand = commandTokens.shift()
-    if(firstCommand === botPrefix + 'search') {
-        if(commandTokens.length < 1) {
+if(commandTokens.length < 1) {
             message.channel.send("You need to specify a search string!")
         } 
         else {
@@ -51,6 +46,11 @@ client.on('message', async message => {
             }
             // Promise.all(soundBytes.map(createEmbeddedMessage).map(_ => message.channel.send(_))).then(_ => userInteractionMap.get(message.author.id)!.messagesToDelete = _)
         }
+client.on('message', async message => {
+    const commandTokens = message.content.split(" ")
+    const firstCommand = commandTokens.shift()
+    if(firstCommand === botPrefix + 'search') {
+        
     }
     else if(firstCommand === botPrefix + 'byteMe') {
         if(commandTokens.length < 1) {

@@ -12,8 +12,8 @@ import * as TE from 'fp-ts/lib/TaskEither'
 const defaultRandomYarns: NEL.NonEmptyArray<SoundByte> = [{ url: "", duration: "", gif: "", title: "", toString: () => "", transcript: "" }]
 const numberOfRandomResults = 25
 
-export const getRandomSoundByte = (): Task<Opt.Option<SoundByte>> => {
-    const resultOrError = TE.taskEither.chain(
+export const getRandomSoundByte = (): TE.TaskEither<Error, Opt.Option<SoundByte>> => {
+    return TE.taskEither.chain(
         popularYarn(),
         html => pipe(
             parseYarnResults(html, numberOfRandomResults),
@@ -24,28 +24,11 @@ export const getRandomSoundByte = (): Task<Opt.Option<SoundByte>> => {
             )
         )
     )
-
-    return foldEitherErrorOrSoundByte(resultOrError)
 }
 
-export const getSoundByteThatMatches = (search: string): Task<Opt.Option<SoundByte>> => {
-    const resultOrError = TE.taskEither.map(
+export const getSoundByteThatMatches = (search: string, limit: number): TE.TaskEither<Error, Opt.Option<NEL.NonEmptyArray<SoundByte>>> => {
+    return TE.taskEither.map(
         searchYarn(search),
-        html => pipe(
-            parseYarnResults(html, 1),
-            Opt.map(yarns => Arr.head(yarns)),
-            Opt.flatten
-        )
+        html => parseYarnResults(html, limit)
     )
-    return foldEitherErrorOrSoundByte(resultOrError)
-}
-
-const foldEitherErrorOrSoundByte = (errorOrSoundByte: TE.TaskEither<Error, Opt.Option<SoundByte>>) => {
-    return TE.fold(
-        (error: Error) => {
-            console.error(error.message)
-            return task.of(Opt.none)
-        },
-        (maybeSoundByte: Opt.Option<SoundByte>) => task.of(maybeSoundByte)
-    )(errorOrSoundByte)
 }
