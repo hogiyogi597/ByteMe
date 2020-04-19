@@ -1,15 +1,15 @@
-import { searchYarn, parseYarnResults, popularYarn } from "../get-yarn"
-import { Task, task } from "fp-ts/lib/Task"
+import { searchYarn, parseYarnResults, popularYarn } from "./yarnClient"
 import * as Arr from 'fp-ts/lib/Array'
 import { randomInt } from 'fp-ts/lib/Random'
-import { SoundByte } from "../get-yarn/models"
+import { SoundByte } from "./models"
 import * as Opt from "fp-ts/lib/Option"
 import * as NEL from "fp-ts/lib/NonEmptyArray"
 import { pipe } from 'fp-ts/lib/pipeable'
 import { identity } from 'fp-ts/lib/function'
 import * as TE from 'fp-ts/lib/TaskEither'
 
-const defaultRandomYarns: NEL.NonEmptyArray<SoundByte> = [{ url: "", duration: "", gif: "", title: "", toString: () => "", transcript: "" }]
+// TODO: add in list of default random yarns
+const defaultRandomYarns: NEL.NonEmptyArray<SoundByte> = [{ url: "", duration: "", gif: "", title: "", transcript: "" }]
 const numberOfRandomResults = 25
 
 export const getRandomSoundByte = (): TE.TaskEither<Error, Opt.Option<SoundByte>> => {

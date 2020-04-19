@@ -27,4 +27,4 @@ class DiscordClient {
     }
 }
 
-new DiscordClient().run()
+export default DiscordClient

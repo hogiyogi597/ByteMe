@@ -3,7 +3,5 @@ export interface SoundByte {
     gif: string,
     title: string,
     transcript: string,
-    duration: string,
-    
-    toString: () => string
+    duration: string
 }

@@ -1,21 +1,25 @@
-import Discord, { Snowflake, MessageEmbed, Message, TextChannel, Webhook, Client } from 'discord.js'
-import { UserInteractionState, createUserInteractionState } from './models'
-import { getRandomSoundByte, getSoundByteThatMatches } from './simpleSearchHandler'
+import { MessageEmbed, Message, TextChannel } from 'discord.js'
+import { createUserInteractionState } from './models'
+import { getRandomSoundByte, getSoundByteThatMatches } from '../get-yarn/simpleSearchHandler'
 import * as NEL from 'fp-ts/lib/NonEmptyArray'
 import * as Arr from 'fp-ts/lib/Array'
 import * as Opt from 'fp-ts/lib/Option'
 import { SoundByte } from '../get-yarn/models'
 import { pipe } from 'fp-ts/lib/pipeable'
-import * as S from 'fp-ts/lib/Semigroup'
 import * as T from 'fp-ts/lib/Task'
 import * as TE from 'fp-ts/lib/TaskEither'
-import * as M from 'fp-ts/lib/Map'
-import * as Eq from 'fp-ts/lib/Eq'
-import * as fpUtils from '../fp-utils'
-import { foldEitherErrorOrSoundByte } from '../fp-utils'
+import * as E from 'fp-ts/lib/Either'
+import { foldEitherErrorOrSoundByte, joinTokens } from '../fp-utils'
+import UserInteractionMap from './UserInteractionMap'
+import { createEmbeddedMessage, sendDiscordMessage } from './discordUtils'
 
 const botPrefix = '\/'
-const searchInteraction: Map<Snowflake, UserInteractionState> = new Map()
+const userStateMap = new UserInteractionMap()
+
+interface TransformedMessages {
+    embeddedMessages: NEL.NonEmptyArray<MessageEmbed>,
+    soundBytes: NEL.NonEmptyArray<SoundByte>
+}
 
 export const handleMessage = (message: Message) => {
     Opt.option.map(
@@ -35,6 +39,7 @@ export const handleMessage = (message: Message) => {
 }
 
 const handleStringCommand = (message: Message, command: string, remainingTokens: Opt.Option<NEL.NonEmptyArray<string>>) => () => {
+    const sendDiscordMessageToChannel = sendDiscordMessage(message.channel)
     const trimmedCommand = command.substring(command.indexOf(botPrefix) + 1)
 
     if (trimmedCommand === command)
@@ -42,104 +47,143 @@ const handleStringCommand = (message: Message, command: string, remainingTokens:
 
     switch (trimmedCommand) {
         case 'byteMe':
-            const findAndReturnSoundByte = pipe(
-                Opt.fold(
-                    () => getRandomSoundByte(),
-                    (tokens: NEL.NonEmptyArray<string>) => {
-                        return pipe(
-                            getPossibleSoundByte(tokens, 1),
-                            TE.map(Opt.map(Arr.head)),
-                            TE.map(Opt.flatten)
-                        )
-                    }
-                )(remainingTokens),
-                fpUtils.foldEitherErrorOrSoundByte,
-                T.map(
-                    Opt.fold(
-                        () => `Unable to find any sound byte`,
-                        (soundByte: SoundByte) => soundByte.url
-                    )
-                ),
-                T.chain((msgContent: string): T.Task<Message> => {
-                    return () => message.channel.send(msgContent)
-                })
-            )
-
-            findAndReturnSoundByte()
+            T.task.chain(
+                getSoundByteUrl(remainingTokens),
+                E.fold(
+                    sendDiscordMessageToChannel,
+                    sendDiscordMessageToChannel
+                )
+            )()
             break;
         case 'search':
-            const temp: TE.TaskEither<Error, Message> = Opt.fold<NEL.NonEmptyArray<string>, T.Task<Discord.Message>>(
-                () => () => message.channel.send("You need to specify a search string!"),
-                (tokens: NEL.NonEmptyArray<string>) => {
-                    return pipe(
-                        getPossibleSoundByte(tokens, 10),
-                        TE.map(
-                            Opt.fold<NEL.NonEmptyArray<SoundByte>, T.Task<Message>>(
-                                () => () => message.channel.send("Unable to find any sound byte"),
-                                soundBytes => {
-                                    const embeddedMessages = NEL.mapWithIndex((i: number, sb: SoundByte) => createEmbeddedMessage(sb, i))(soundBytes)
-                                    if (message.channel instanceof TextChannel) {
-                                        return pipe(
-                                            () => (message.channel as TextChannel).createWebhook("ByteMeSearchResults"),
-                                            T.chain(hook => {
-                                                M.insertAt(Eq.eqString)(message.author.id, createUserInteractionState(soundBytes, hook))(searchInteraction)
-                                                return () => hook.send(
+            pipe(
+                Opt.option.map(
+                    remainingTokens,
+                    (tokens: NEL.NonEmptyArray<string>) => {
+                        return pipe(
+                            getPossibleSoundByte(tokens, 10),
+                            TE.map(
+                                Opt.map(soundBytes => ({
+                                    embeddedMessages: NEL.mapWithIndex((i: number, sb: SoundByte) => createEmbeddedMessage(sb, i))(soundBytes),
+                                    soundBytes: soundBytes
+                                }))
+                            )
+                        )
+                    }
+                ),
+                Opt.fold(
+                    () => sendDiscordMessageToChannel('You need to specify a search string!'),
+                    TE.fold(
+                        (error: Error) => T.task.chain(
+                            T.task.of(console.error(`Failed to find sound bytes!`, error)),
+                            () => sendDiscordMessageToChannel('Failed to find sound bytes')
+                        ),
+                        Opt.fold(
+                            () => sendDiscordMessageToChannel('Could not find any sound bytes for the search string'),
+                            ({ soundBytes, embeddedMessages }: TransformedMessages) => {
+                                if (message.channel instanceof TextChannel) {
+                                    return pipe(
+                                        () => (message.channel as TextChannel).createWebhook("ByteMeSearchResults"),
+                                        T.chain(hook => {
+                                            return T.task.chain(
+                                                T.fromIO(userStateMap.startSearchForUser(message.author.id, createUserInteractionState(soundBytes, hook))),
+                                                () => () => hook.send(
                                                     `Type the number of the sound byte you want <@${message.author}> or 'cancel'`,
                                                     {
                                                         embeds: embeddedMessages,
                                                     }
                                                 )
-                                            }),
-                                            T.map(sentMessage => {
-                                                M.modifyAt(Eq.eqString)
-                                                (
-                                                    message.author.id, 
-                                                    (searchState: UserInteractionState): UserInteractionState => ({...searchState, message: sentMessage})
-                                                )
-                                                (searchInteraction)
-                                                return sentMessage
-                                            })
+                                            )
+                                        }),
+                                        T.chainFirst(sentMessage => T.fromIO(
+                                                userStateMap.updateUserStateWithMessage(message.author.id)(sentMessage)
+                                            )
                                         )
-                                    }
-                                    else {
-                                        return () => message.channel.send(`Unable to send embedded message since channel is not a TextChannel`)
-                                    }
+                                    )
                                 }
-                            )
+                                else {
+                                    return sendDiscordMessageToChannel(`Unable to send embedded message since channel is not a TextChannel`)
+                                }
+                            }
                         )
                     )
-                }
-            )(remainingTokens)
+                )
+            )()
             break;
         case 'cancel':
-            // delete search message
+            T.task.chain(
+                T.fromIO(userStateMap.removeSearchForUser(message.author.id)),
+                Opt.fold(
+                    () => T.of(message.author.id),
+                    userState => pipe(
+                        Opt.map((_: Message) => _.delete())(userState.message),
+                        () => () => userState.webhook.delete(),
+                        T.map(() => message.author.id)
+                    )
+                )
+            )()
             break;
         case 'help':
+            const sendHelpDialog: T.Task<Message> =
+            sendDiscordMessageToChannel(
+                "The following commands are available:"
+                + "\n\t" + "- '/byteMe [optional search phrase]'"
+                + "\n\t\t\t" + "- Returns a sound byte matching the phrase or random if ommitted"
+                + "\n\t" + "- '/search [search phrase]'"
+                + "\n\t\t\t" + "- Returns up to 10 results that match the search phrase allowing the user to select or cancel"
+                + "\n\t" + "- '/help'"
+                + "\n\t\t\t" + "- Prints this message to the channel"
+            )
+
+            sendHelpDialog()
         default:
     }
 }
 
 const handleNumberCommand = (message: Message) => (number: number) => {
-    console.log("handling number command")
+    pipe(
+        T.fromIO(userStateMap.lookupByUser(message.author.id)),
+        T.map(Opt.chain(userState => (number < 0 || number >= userState.searchResults.length) ? Opt.none : Opt.some(userState))),
+        T.chain(Opt.fold(
+            () => T.of(message.author.id),
+            () => pipe(
+                T.fromIO(userStateMap.removeSearchForUser(message.author.id)),
+                T.map(Opt.map(userState => pipe(
+                    Opt.map((_: Message) => _.delete())(userState.message),
+                    () => () => userState.webhook.delete(),
+                    T.chain(() => () => message.channel.send(userState.searchResults[number].url)),
+                    T.map(() => message.author.id)
+                ))),
+                T.map(Opt.getOrElse(() => T.of(message.author.id))),
+                T.flatten
+            ),
+        ))
+    )()
+}
+
+const getSoundByteUrl = (remainingTokens: Opt.Option<NEL.NonEmptyArray<string>>) => {
+    return pipe(
+        getSoundByteOrRandomDefault(remainingTokens),
+        foldEitherErrorOrSoundByte,
+        T.map(Opt.map((soundByte: SoundByte) => soundByte.url)),
+        T.map(E.fromOption(() => `Unable to find any sound byte`))
+    )
+}
+
+const getSoundByteOrRandomDefault = (remainingTokens: Opt.Option<NEL.NonEmptyArray<string>>) => {
+    return Opt.fold(
+        () => getRandomSoundByte(),
+        (tokens: NEL.NonEmptyArray<string>) => {
+            return pipe(
+                getPossibleSoundByte(tokens, 1),
+                TE.map(Opt.map(Arr.head)),
+                TE.map(Opt.flatten)
+            )
+        }
+    )(remainingTokens)
 }
 
 const getPossibleSoundByte = (tokens: NEL.NonEmptyArray<string>, limit: number) => {
     const searchString = joinTokens(tokens)
     return getSoundByteThatMatches(searchString, limit)
-}
-
-const joinTokens = (tokens: NEL.NonEmptyArray<string>): string => {
-    const semigroupSpace: S.Semigroup<string> = {
-        concat: (x, y) => x + ' ' + y
-    }
-    return S.fold(semigroupSpace)('', tokens).trimLeft()
-}
-
-const createEmbeddedMessage = (soundByte: SoundByte, index: number): MessageEmbed => {
-    return new MessageEmbed()
-        .setTitle(`${index}. ${soundByte.title}`)
-        .setDescription(soundByte.transcript)
-        .setThumbnail(soundByte.gif)
-        .setFooter(soundByte.duration)
-        .setColor(0x00ff00)
 }
